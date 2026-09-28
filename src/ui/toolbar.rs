@@ -310,12 +310,32 @@ impl Toolbar {
                         - ui.spacing().item_spacing.y * 3.0
                         - 8.0)
                         .max(1.0);
+                    // A bar only when there is something to scroll. egui's
+                    // default scroll style is *floating*: it reserves no
+                    // width and draws over the content's right edge, and
+                    // `AlwaysVisible` overrides the fade that would
+                    // otherwise hide it while dormant — so on a canvas tall
+                    // enough to need no scrolling at all, a 10px bar still
+                    // sat permanently across the right-hand ends of the
+                    // tool and action buttons.
+                    //
+                    // `VisibleWhenNeeded` alone would swap that for the
+                    // opposite problem, since a dormant floating bar is
+                    // fully transparent: the panel would be scrollable with
+                    // nothing to say so. A solid bar reserves its own width
+                    // instead, so when it does appear it sits beside the
+                    // buttons rather than on top of them, and the controls
+                    // reflow into what's left.
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle {
+                        bar_width: (6.0 * scale).round(),
+                        ..egui::style::ScrollStyle::solid()
+                    };
                     egui::ScrollArea::vertical()
                         .id_salt("toolbar-controls")
                         .max_height(body_height)
                         .auto_shrink([false, true])
                         .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
                             // Rail, less the drag-value box egui puts beside it.
