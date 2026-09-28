@@ -2,10 +2,10 @@
 //! with the same font/color the committed annotation will have. Never
 //! soft-wraps — lines break only at typed newlines. A grip pinned to the
 //! box drags it, so text can be repositioned without committing first. As
-//! the buffer grows, the annotation is reclamped to the image (so it can
-//! never be cropped by the image's own edge on export) and the view is
-//! panned to keep the box on screen (so a long line can't type itself
-//! somewhere you can't see).
+//! the text changes, the annotation is reclamped to the export bounds (the
+//! region when there is one, else the image — so it can never be cropped
+//! on export) and the view is panned to keep the box on screen (so a long
+//! line can't type itself somewhere you can't see).
 
 use eframe::egui::text_selection::CCursorRange;
 use eframe::egui::widgets::text_edit::TextEditState;
@@ -68,23 +68,41 @@ pub fn show(ctx: &Context, editor: &mut Editor, canvas: Rect) -> Option<TextEdit
     // there, so a long line (or several Shift+Enter'd ones) can reach past
     // them — and whatever's past it is gone, cropped away exactly like
     // anything else outside them. This one *does* move the anchor, unlike
-    // the screen-space nudge below: keeping it fixed at the original click
+    // the screen-space pan below: keeping it fixed at the original click
     // would mean silently losing the overflowing part of the text forever,
     // which is worse than the text sliding a little while you type.
-    // Measured unzoomed (image px, not screen px — export doesn't know
-    // about the view's zoom) and reclamped every frame, so it tracks the
-    // buffer as it grows and shrinks.
-    let lines_img = edit.buffer.matches('\n').count() as f32 + 1.0;
+    //
+    // Measured unzoomed, in image px, because that is what export renders
+    // in. Export lays out at `pixels_per_point` 1.0 (`export::text::draw`)
+    // and this layout runs at the screen's, which in egui 0.36 agree on
+    // width exactly and on row height to within half a pixel — `MARGIN`
+    // below covers that rounding, so the clamp cannot leave a sliver to be
+    // cropped. Rotation is ignored: the inline editor draws unrotated, so
+    // this bounds what is actually on screen while typing.
+    //
+    // Only when the text itself changed, not every frame: the screen pan
+    // below would otherwise fight a deliberate scroll-zoom or middle-drag
+    // (`canvas::show`) by snapping the box straight back, and re-opening
+    // text that already overhangs would move it — recording an undo step
+    // for merely looking at it.
+    const MARGIN: f32 = 1.0;
     let unzoomed_font = FontId::proportional(edit.style.font_size.max(1.0));
-    let text_w_img = ctx
+    let text_size_img = ctx
         .fonts_mut(|f| f.layout_no_wrap(edit.buffer.clone(), unzoomed_font, Color32::WHITE))
         .size()
-        .x;
-    let text_h_img = edit.style.font_size * 1.3 * lines_img;
-    let text_rect_img = Rect::from_min_size(edit.pos, Vec2::new(text_w_img, text_h_img));
-    let img_nudge = keep_in_view(text_rect_img, export_bounds);
+        + Vec2::splat(MARGIN);
+    let text_rect_img = Rect::from_min_size(edit.pos, text_size_img);
+    let text_changed = edit.last_rect != Some(text_rect_img);
+    let img_nudge = if text_changed {
+        keep_in_view(text_rect_img, export_bounds)
+    } else {
+        Vec2::ZERO
+    };
     if img_nudge != Vec2::ZERO {
         edit.pos += img_nudge;
+    }
+    if text_changed {
+        edit.last_rect = Some(text_rect_img.translate(img_nudge));
     }
 
     let screen_pos = view.to_screen(canvas, edit.pos);
@@ -92,11 +110,10 @@ pub fn show(ctx: &Context, editor: &mut Editor, canvas: Rect) -> Option<TextEdit
     // Size the editor to its content so clicks next to the text still reach
     // the canvas (and commit); the margin absorbs the one-frame lag of the
     // measurement.
-    let width = ctx
+    let text_size = ctx
         .fonts_mut(|f| f.layout_no_wrap(edit.buffer.clone(), font.clone(), Color32::WHITE))
-        .size()
-        .x
-        + font.size * 2.0;
+        .size();
+    let width = text_size.x + font.size * 2.0;
     let layout_font = font.clone();
     let text_color = edit.style.color;
     let mut layouter = move |ui: &Ui, buf: &dyn egui::TextBuffer, _wrap: f32| {
@@ -113,25 +130,38 @@ pub fn show(ctx: &Context, editor: &mut Editor, canvas: Rect) -> Option<TextEdit
     // already settled by the clamp above, and panning brings the box back
     // into view without unsettling it again — the same way typing off the
     // edge of any scrollable text field scrolls the view, not the text.
+    // Gated on the same `text_changed` as that clamp, so panning or
+    // zooming the box off-canvas on purpose stays put.
     //
     // The grip rides above the box, unless the box sits close enough to
     // the top of the canvas that there is no room for it up there.
     let grip_above = screen_pos.y - GRIP_H >= canvas.min.y;
     let box_min = if grip_above { screen_pos - Vec2::new(0.0, GRIP_H) } else { screen_pos };
-    // Height is an estimate (line count × an approximate line height) --
-    // exactly wide enough is enough to keep the box from wandering off,
-    // and it self-corrects every frame as the buffer changes.
-    let lines = edit.buffer.matches('\n').count() as f32 + 1.0;
-    let box_h = GRIP_H + font.size * 1.3 * lines;
-    // The grip itself is a small fixed-width tab now (`GRIP_W`), not
-    // matched to the text — the box's own width is still the text's, so
-    // that's what governs whether the box overflows.
-    let box_rect = Rect::from_min_size(box_min, Vec2::new(width.max(GRIP_W), box_h));
-    let nudge = keep_in_view(box_rect, canvas);
+    // `text_size` is the laid-out height, not an estimate. The grip is a
+    // small fixed-width tab (`GRIP_W`) rather than the box's width, so the
+    // text is what governs overflow.
+    let box_rect = Rect::from_min_size(
+        box_min,
+        Vec2::new(width.max(GRIP_W), GRIP_H + text_size.y + MARGIN),
+    );
+    let nudge = if text_changed {
+        keep_in_view(box_rect, canvas)
+    } else {
+        Vec2::ZERO
+    };
     if nudge != Vec2::ZERO {
-        editor.view.pan_by(nudge);
+        // `pan`, not `pan_by`: this is the editor keeping up with itself,
+        // not the user taking the view over, so it must not set the
+        // `adjusted` flag that disables refitting on a canvas resize.
+        editor.view.pan += nudge;
+        // `canvas::show` already painted the image this frame at the old
+        // pan (see `app::ui`), so the box is drawn where the *old* pan put
+        // it and the corrected frame is requested immediately — rather
+        // than offsetting the box here, which would leave it misaligned
+        // against the image underneath for that frame.
+        ctx.request_repaint();
     }
-    let area_pos = box_min + nudge;
+    let area_pos = box_min;
     let mut grip = None;
     egui::Area::new(Id::new("text-editor"))
         .fixed_pos(area_pos)
@@ -181,8 +211,8 @@ pub fn show(ctx: &Context, editor: &mut Editor, canvas: Rect) -> Option<TextEdit
     // coords, so the delta has to come back through the zoom.
     if let Some(grip) = grip {
         if grip.dragged() {
-            edit.pos =
-                (edit.pos + grip.drag_delta() / view.zoom).clamp(export_bounds.min, export_bounds.max);
+            edit.pos = (edit.pos + grip.drag_delta() / view.zoom)
+                .clamp(export_bounds.min, export_bounds.max);
         }
         // Pressing anywhere outside the TextEdit clears egui's focus, which
         // would leave the keyboard nowhere. Hand it back when the drag ends.
@@ -207,14 +237,22 @@ fn drag_grip(ui: &mut Ui) -> egui::Response {
     ui.painter().rect_filled(
         rect,
         4.0,
-        if hot { Color32::from_black_alpha(200) } else { Color32::from_black_alpha(140) },
+        if hot {
+            Color32::from_black_alpha(200)
+        } else {
+            Color32::from_black_alpha(140)
+        },
     );
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
         "• • •",
         FontId::proportional(13.0),
-        if hot { Color32::WHITE } else { Color32::from_gray(205) },
+        if hot {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(205)
+        },
     );
     if resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -224,25 +262,26 @@ fn drag_grip(ui: &mut Ui) -> egui::Response {
     resp
 }
 
-/// How far to pan the view so `box_rect` (the editor's on-screen bounding
-/// box, grip included) stays inside `canvas` — the fix for a box that
-/// never soft-wraps otherwise growing straight off the edge of the screen
-/// as you type. Prefers keeping the leading edge (top-left, where reading
-/// starts) in view over the trailing edge when `box_rect` is too big for
-/// `canvas` to hold both.
-fn keep_in_view(box_rect: Rect, canvas: Rect) -> Vec2 {
+/// How far `rect` has to move to sit inside `bounds` — the fix for a box
+/// that never soft-wraps otherwise growing straight off an edge as you
+/// type. Used twice, in both coordinate spaces: image-space, to keep the
+/// annotation inside the export bounds, and screen-space, to work out how
+/// far to pan the view. Prefers keeping the leading edge (top-left, where
+/// reading starts) inside over the trailing edge when `rect` is too big
+/// for `bounds` to hold both.
+fn keep_in_view(rect: Rect, bounds: Rect) -> Vec2 {
     let mut nudge = Vec2::ZERO;
-    if box_rect.right() > canvas.max.x {
-        nudge.x = canvas.max.x - box_rect.right();
+    if rect.right() > bounds.max.x {
+        nudge.x = bounds.max.x - rect.right();
     }
-    if box_rect.left() + nudge.x < canvas.min.x {
-        nudge.x = canvas.min.x - box_rect.left();
+    if rect.left() + nudge.x < bounds.min.x {
+        nudge.x = bounds.min.x - rect.left();
     }
-    if box_rect.bottom() > canvas.max.y {
-        nudge.y = canvas.max.y - box_rect.bottom();
+    if rect.bottom() > bounds.max.y {
+        nudge.y = bounds.max.y - rect.bottom();
     }
-    if box_rect.top() + nudge.y < canvas.min.y {
-        nudge.y = canvas.min.y - box_rect.top();
+    if rect.top() + nudge.y < bounds.min.y {
+        nudge.y = bounds.min.y - rect.top();
     }
     nudge
 }
@@ -327,5 +366,38 @@ mod tests {
         let box_rect = Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(1200.0, 40.0));
         let nudge = keep_in_view(box_rect, canvas);
         assert_eq!((box_rect.min + nudge).x, canvas.min.x);
+    }
+
+    #[test]
+    fn the_region_is_what_text_is_kept_inside_not_the_whole_image() {
+        // The region is what export crops to, so a position comfortably
+        // inside the image can still be cropped away. 200 wide at x=900
+        // fits the 1000-wide image but overhangs a region ending at 800.
+        let image = Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0));
+        let region = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(800.0, 700.0));
+        let text = Rect::from_min_size(Pos2::new(900.0, 200.0), Vec2::new(200.0, 40.0));
+        assert_eq!(keep_in_view(text, image), Vec2::new(-100.0, 0.0));
+        assert_eq!(keep_in_view(text, region), Vec2::new(-300.0, 0.0));
+        // Clamped to the region, the text ends exactly on its edge.
+        assert_eq!(
+            (text.min + keep_in_view(text, region)).x + text.width(),
+            region.max.x
+        );
+    }
+
+    #[test]
+    fn a_rect_already_inside_its_bounds_is_left_alone() {
+        // The gate that stops this running every frame relies on an
+        // in-bounds rect asking for nothing, so a repeat measurement of
+        // unchanged text can't nudge the view.
+        let bounds = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(800.0, 700.0));
+        for pos in [
+            Pos2::new(100.0, 100.0),
+            Pos2::new(400.0, 400.0),
+            Pos2::new(600.0, 600.0),
+        ] {
+            let rect = Rect::from_min_size(pos, Vec2::new(200.0, 40.0));
+            assert_eq!(keep_in_view(rect, bounds), Vec2::ZERO, "{pos:?}");
+        }
     }
 }

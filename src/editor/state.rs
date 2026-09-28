@@ -43,6 +43,12 @@ pub struct TextEditState {
     pub buffer: String,
     pub style: Style,
     pub just_created: bool,
+    /// The text's image-space rect the last time the overlay kept it inside
+    /// the export bounds, so that work can be done when the text changes
+    /// rather than every frame. `None` until the first measurement: merely
+    /// re-opening text that already overhangs must not move it (that would
+    /// record an undo step for looking at it) — editing is what fixes it.
+    pub last_rect: Option<Rect>,
 }
 
 pub enum EditorState {

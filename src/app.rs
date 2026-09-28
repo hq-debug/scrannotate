@@ -804,6 +804,7 @@ mod tests {
             buffer: "Keep this text".into(),
             style: app.editor.style,
             just_created: false,
+            last_rect: None,
         });
     }
 

@@ -859,6 +859,7 @@ impl Editor {
                 buffer: String::new(),
                 style: self.style,
                 just_created: true,
+                last_rect: None,
             });
         }
     }
@@ -874,6 +875,7 @@ impl Editor {
                 buffer: text.clone(),
                 style: ann.style,
                 just_created: true,
+                last_rect: None,
             });
             self.selected.clear();
             self.selected.insert(id);
