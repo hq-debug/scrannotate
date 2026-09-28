@@ -1383,6 +1383,50 @@ mod tests {
     }
 
     #[test]
+    fn a_stroke_click_picks_up_an_arrow_or_box_too() {
+        // The case actually reported. Highlight above is hit by
+        // containment, which says nothing about the hollow shapes: an
+        // arrow is a line and a box is four of them, hit only near the
+        // stroke, so those are the clicks that have to land.
+        let a = Pos2::new(100.0, 100.0);
+        let b = Pos2::new(200.0, 160.0);
+        for (label, shape, on_stroke) in [
+            // A third of the way along the arrow's shaft.
+            ("arrow", Shape::Arrow { a, b }, Pos2::new(133.0, 120.0)),
+            // On the box's top edge, away from any corner handle.
+            ("box", Shape::Rect { rect: Rect::from_two_pos(a, b) }, Pos2::new(150.0, 100.0)),
+        ] {
+            let mut ed = editor();
+            ed.doc.begin();
+            let id = ed.doc.push(Annotation::new(shape, ed.style));
+            ed.doc.commit();
+            ed.set_tool(Tool::Rect);
+            ed.click(on_stroke, on_stroke, canvas(), Modifiers::NONE, &measure);
+            assert_eq!(ed.tool, Tool::Select, "{label}: must land on Select");
+            assert_eq!(ed.single_selected(), Some(id), "{label}: must hold the item");
+        }
+    }
+
+    #[test]
+    fn a_click_in_a_hollow_shapes_middle_is_not_a_hit() {
+        // The flip side, pinned deliberately: hollow shapes are hit near
+        // the stroke, so the empty middle of a box belongs to whatever is
+        // underneath it. Pre-existing, and the same with any tool — this
+        // guards the boundary rather than endorsing it.
+        let mut ed = editor();
+        ed.doc.begin();
+        let rect = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(300.0, 250.0));
+        let id = ed.doc.push(Annotation::new(Shape::Rect { rect }, ed.style));
+        ed.doc.commit();
+        for tool in [Tool::Rect, Tool::Select] {
+            ed.set_tool(tool);
+            let middle = Pos2::new(200.0, 175.0);
+            ed.click(middle, middle, canvas(), Modifiers::NONE, &measure);
+            assert!(!ed.selected.contains(&id), "{tool:?}: the middle is not the box");
+        }
+    }
+
+    #[test]
     fn clicking_empty_space_with_a_drawing_tool_stays_on_the_tool() {
         let mut ed = editor();
         add_highlight(&mut ed, Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(200.0, 150.0)));
