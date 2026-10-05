@@ -807,6 +807,74 @@ mod tests {
     }
 
     #[test]
+    fn the_border_button_toggles_back_off() {
+        let ctx = Context::default();
+        let mut toolbar = Toolbar::new(UiScale::default());
+        let mut editor = editor();
+        editor.doc.region = Some(editor.doc.image_rect());
+        let click = |ctx: &Context, toolbar: &mut Toolbar, editor: &mut Editor| {
+            // Find the button fresh each time: toggling restyles it, and
+            // the panel may have scrolled.
+            let mut at = None;
+            for _ in 0..40 {
+                let (output, _) = frame(ctx, toolbar, editor, vec![], None);
+                if let Some(rect) = visible_text(&output, "Border") {
+                    at = Some(rect.center());
+                    break;
+                }
+                // Not on screen yet on a short canvas: scroll towards it.
+                frame(
+                    ctx,
+                    toolbar,
+                    editor,
+                    vec![
+                        Event::PointerMoved(
+                            ctx.memory(|m| m.area_rect(Id::new("toolbar")))
+                                .unwrap()
+                                .center(),
+                        ),
+                        Event::MouseWheel {
+                            unit: MouseWheelUnit::Point,
+                            phase: egui::TouchPhase::Move,
+                            delta: Vec2::new(0.0, -120.0),
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                    None,
+                );
+            }
+            let at = at.expect("Border button must be reachable");
+            frame(
+                ctx,
+                toolbar,
+                editor,
+                vec![
+                    Event::PointerMoved(at),
+                    Event::PointerButton {
+                        pos: at,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    Event::PointerButton {
+                        pos: at,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+                None,
+            );
+        };
+
+        assert!(!editor.border, "off to begin with");
+        click(&ctx, &mut toolbar, &mut editor);
+        assert!(editor.border, "first click turns it on");
+        click(&ctx, &mut toolbar, &mut editor);
+        assert!(!editor.border, "second click turns it back off");
+    }
+
+    #[test]
     fn status_footer_remeasures_when_scale_shrinks() {
         let ctx = Context::default();
         let mut toolbar = Toolbar::new(UiScale::Large);
