@@ -347,6 +347,36 @@ impl Toolbar {
                                     }
                                 });
                             }
+                            // Export border, with the tools because that is
+                            // where it reads as belonging — but a toggle,
+                            // not an eleventh tool: it frames the exported
+                            // image rather than placing an object in it, so
+                            // it does not join `TOOLS` or go through
+                            // `set_tool` (which would clear the selection
+                            // and take the active tool away). Full width so
+                            // the two-per-row grid above still scans as the
+                            // tools, and lit like an active tool when on.
+                            // Color comes from the swatch below, so the
+                            // picker already drives it.
+                            let border_btn = {
+                                let text = RichText::new("Border").size(btn_font).color(
+                                    if editor.border {
+                                        Color32::WHITE
+                                    } else {
+                                        Color32::from_gray(235)
+                                    },
+                                );
+                                let mut btn = Button::new(text);
+                                if editor.border {
+                                    btn = btn.fill(ACTIVE_TOOL_FILL);
+                                }
+                                ui.add_sized(Vec2::new(ui.available_width(), btn_h), btn)
+                                    .on_hover_text("Frame the exported image with a border")
+                            };
+                            if border_btn.clicked() {
+                                border_btn.surrender_focus();
+                                editor.border = !editor.border;
+                            }
                             ui.separator();
 
                             // Settings target: text being edited, the selection, or
@@ -498,31 +528,6 @@ impl Toolbar {
                             }
                             if reset {
                                 editor.reset_all();
-                            }
-                            // Export border: a toggle rather than a tool,
-                            // since it frames the exported image instead of
-                            // being an object placed in it. Lit like an
-                            // active tool when on, and it takes its color
-                            // from the swatch above, so the picker already
-                            // drives it.
-                            let border_btn = {
-                                let text = RichText::new("Border").size(btn_font).color(
-                                    if editor.border {
-                                        Color32::WHITE
-                                    } else {
-                                        Color32::from_gray(235)
-                                    },
-                                );
-                                let mut btn = Button::new(text);
-                                if editor.border {
-                                    btn = btn.fill(ACTIVE_TOOL_FILL);
-                                }
-                                ui.add_sized(Vec2::new(ui.available_width(), btn_h), btn)
-                                    .on_hover_text("Frame the exported image with a border")
-                            };
-                            if border_btn.clicked() {
-                                border_btn.surrender_focus();
-                                editor.border = !editor.border;
                             }
                             ui.separator();
                             let copy_label = format!("Copy+Close {}", shortcut(Key::C));
