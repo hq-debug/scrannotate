@@ -106,7 +106,8 @@ impl ScreencapApp {
             width: stroke_width,
             font_size,
         };
-        let editor = Editor::new(doc, style, palette, persist_style);
+        let mut editor = Editor::new(doc, style, palette, persist_style);
+        editor.border = saved.border.unwrap_or(false);
 
         let mut app = Self {
             editor,
@@ -253,7 +254,14 @@ impl ScreencapApp {
     /// annotations rendered in.
     fn rendered(&self) -> anyhow::Result<RgbaImage> {
         let doc = &self.editor.doc;
-        export::render_to_image(&doc.base, doc.shapes(), doc.region)
+        let img = export::render_to_image(&doc.base, doc.shapes(), doc.region)?;
+        // After the crop, so the border frames what is actually exported
+        // rather than the whole capture (which the crop would discard).
+        if !self.editor.border {
+            return Ok(img);
+        }
+        let width = export::border_width(img.dimensions());
+        Ok(export::with_border(&img, width, self.editor.style.color))
     }
 
     /// Save the region; optionally quit. On failure stay open either way.
@@ -701,6 +709,7 @@ impl eframe::App for ScreencapApp {
             &self.editor.palette,
             self.editor.persist_style.then_some(&self.editor.style),
             self.toolbar.ui_scale,
+            self.editor.border,
         );
     }
 

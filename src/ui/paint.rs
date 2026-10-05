@@ -323,6 +323,25 @@ pub fn paint_region(painter: &egui::Painter, editor: &Editor, canvas: Rect) {
             painter.circle_stroke(grip, REGION_GRIP_RADIUS, Stroke::new(1.5, Color32::WHITE));
             paint_move_icon(painter, grip, 6.0, Color32::WHITE);
         }
+        // Export border preview: the outset form grows the output, so it
+        // sits *outside* the region rather than over the captured pixels
+        // inside it. Drawn at the exported thickness scaled into screen
+        // space, so what you see is the proportion you get.
+        if editor.border {
+            let exported = (
+                region.width().round() as u32,
+                region.height().round() as u32,
+            );
+            let w = crate::export::border_width(exported) as f32 * editor.view.zoom;
+            if w >= 1.0 {
+                painter.rect_stroke(
+                    ss.expand(w * 0.5),
+                    CornerRadius::ZERO,
+                    Stroke::new(w, editor.style.color),
+                    StrokeKind::Middle,
+                );
+            }
+        }
         let dims = format!("{}×{}", region.width().round(), region.height().round());
         let (pos, align) = if ss.min.y - canvas.min.y > 24.0 {
             (ss.left_top() + Vec2::new(0.0, -10.0), Align2::LEFT_BOTTOM)

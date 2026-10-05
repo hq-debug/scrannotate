@@ -61,6 +61,12 @@ pub struct Editor {
     /// Width/size were deliberately set (this or a prior session), so they
     /// are a preference worth persisting — not just resolution defaults.
     pub persist_style: bool,
+    /// Draw a solid border around the exported image. An export-stage
+    /// setting, not an annotation: it grows the output rather than painting
+    /// over captured pixels, which nothing positioned in image coordinates
+    /// can express. Takes its color from `style`, so the swatch and picker
+    /// already drive it.
+    pub border: bool,
     /// One undo step per continuous slider adjustment of the selection.
     style_adjusting: bool,
     /// A pan happened while space was held, so releasing space is the end
@@ -80,6 +86,7 @@ impl Editor {
             color_picker: None,
             view: View::new(),
             persist_style,
+            border: false,
             style_adjusting: false,
             space_panned: false,
         }

@@ -52,6 +52,10 @@ authorization is needed.
 - **A toolbar sized to you.** Three small buttons at the top scale the
   whole panel — width, buttons, every font — between Small, Medium, and
   Large.
+- **Optional border.** One toggle frames the exported image in the current
+  color, sized to the capture. It is added around what you export rather
+  than painted over it, so nothing captured is covered — the file just gets
+  slightly larger.
 - **Consistent export.** The PNG/clipboard renderer shares annotation
   geometry and font layout with the on-screen renderer, including rotated
   text and fallback glyphs. Transparent PNG colors are preserved; CPU and

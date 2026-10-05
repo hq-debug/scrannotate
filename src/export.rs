@@ -111,6 +111,39 @@ pub fn render_to_image<'a>(
     Ok(image::imageops::crop_imm(&full, x0, y0, cw, ch).to_image())
 }
 
+/// Grow `img` by a solid border of `width` px on every side — the outset
+/// form: nothing captured is painted over, the output simply gets larger.
+///
+/// An export-stage step rather than an annotation on purpose. Annotations
+/// are drawn onto the full image and only cropped to the region at the very
+/// end, so a border drawn as one would be cropped straight off whenever a
+/// region is selected; and growing the canvas is not something a shape
+/// positioned in image coordinates can express.
+pub fn with_border(img: &RgbaImage, width: u32, color: Color32) -> RgbaImage {
+    if width == 0 {
+        return img.clone();
+    }
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    let (w, h) = img.dimensions();
+    let mut out = RgbaImage::from_pixel(w + width * 2, h + width * 2, image::Rgba([r, g, b, a]));
+    image::imageops::replace(&mut out, img, i64::from(width), i64::from(width));
+    out
+}
+
+/// Border thickness for an exported image of `size`, in px. Scaled with the
+/// image rather than fixed, so it reads the same on a 4K capture as on a
+/// 1080p one (a fixed 8px all but vanishes on the former), and clamped so
+/// neither extreme is absurd: never a hairline, never a picture mount.
+///
+/// Roughly 1/70 of the shorter side — about 15px on a 1080p-tall export.
+/// A thinner rule (1/135, ~7px there) was legible against the content but
+/// too timid at the job people actually want this for: separating a
+/// screenshot from the white page it gets pasted onto.
+pub fn border_width(size: (u32, u32)) -> u32 {
+    let min_dim = f64::from(size.0.min(size.1));
+    (min_dim / 70.0).clamp(8.0, 32.0).round() as u32
+}
+
 /// Source-over from a premultiplied overlay into a straight-alpha image.
 fn composite_overlay(base: &mut RgbaImage, overlay: &Pixmap) {
     for (dst, src) in base.pixels_mut().zip(overlay.pixels()) {
@@ -288,6 +321,71 @@ mod tests {
     use super::*;
     use crate::annotate::Style;
     use eframe::egui::{Pos2, Rect};
+
+    #[test]
+    fn a_border_grows_the_image_and_paints_only_the_new_margin() {
+        let base = RgbaImage::from_pixel(40, 30, image::Rgba([10, 20, 30, 255]));
+        let white = Color32::WHITE;
+        let out = with_border(&base, 5, white);
+        assert_eq!(out.dimensions(), (50, 40), "grows by 2x width on each axis");
+        // Every original pixel survives, shifted by the border width: the
+        // outset form must never paint over what was captured.
+        for y in 0..30 {
+            for x in 0..40 {
+                assert_eq!(
+                    out.get_pixel(x + 5, y + 5),
+                    base.get_pixel(x, y),
+                    "({x},{y})"
+                );
+            }
+        }
+        // The new margin is the border color, corners included.
+        for (x, y) in [(0, 0), (49, 0), (0, 39), (49, 39), (25, 2), (2, 20)] {
+            assert_eq!(
+                out.get_pixel(x, y),
+                &image::Rgba([255, 255, 255, 255]),
+                "({x},{y})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_width_border_is_the_image_itself() {
+        let base = RgbaImage::from_pixel(8, 6, image::Rgba([1, 2, 3, 4]));
+        assert_eq!(with_border(&base, 0, Color32::RED), base);
+    }
+
+    #[test]
+    fn border_width_scales_with_the_image_and_stays_within_bounds() {
+        // Proportional in the middle of the range...
+        assert_eq!(border_width((1920, 1080)), 15);
+        assert_eq!(border_width((1380, 900)), 13);
+        // ...and clamped at both ends, so a thumbnail gets no hairline and
+        // a huge capture gets no picture mount.
+        assert_eq!(border_width((100, 60)), 8);
+        assert_eq!(border_width((8000, 6000)), 32);
+        // Driven by the shorter side, whichever way round the image is.
+        assert_eq!(border_width((4000, 700)), border_width((700, 4000)));
+    }
+
+    #[test]
+    fn the_border_frames_the_cropped_region_not_the_whole_capture() {
+        // The ordering that matters: annotations are drawn onto the full
+        // image and cropped to the region at the very end, so a border
+        // applied before the crop would be cropped straight off. Applied
+        // after, it frames exactly what gets exported.
+        let base = RgbaImage::from_pixel(400, 300, image::Rgba([10, 20, 30, 255]));
+        let region = Rect::from_min_max(Pos2::new(100.0, 50.0), Pos2::new(300.0, 200.0));
+        let cropped = render_to_image(&base, &[], Some(region)).unwrap();
+        assert_eq!(cropped.dimensions(), (200, 150));
+        let w = border_width(cropped.dimensions());
+        let framed = with_border(&cropped, w, Color32::WHITE);
+        assert_eq!(framed.dimensions(), (200 + w * 2, 150 + w * 2));
+        // A border on the full capture would have been 400x300-sized and
+        // lost to the crop; this one survives at the region's own edge.
+        assert_eq!(framed.get_pixel(0, 0), &image::Rgba([255, 255, 255, 255]));
+        assert_eq!(framed.get_pixel(w, w), cropped.get_pixel(0, 0));
+    }
 
     fn style(color: Color32) -> Style {
         Style {

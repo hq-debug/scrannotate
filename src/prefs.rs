@@ -44,6 +44,10 @@ pub struct Prefs {
     /// user has touched it — there's no resolution-scaled default it could
     /// clobber.
     pub ui_scale: Option<UiScale>,
+    /// Export border toggle. Written unconditionally alongside `ui_scale`,
+    /// for the same reason: it is a deliberate choice with no
+    /// resolution-scaled default it could clobber.
+    pub border: Option<bool>,
 }
 
 fn parse_color(hex: &str) -> Option<Color32> {
@@ -83,6 +87,13 @@ pub fn load() -> Prefs {
             "ui_scale" => {
                 prefs.ui_scale = UiScale::parse(value);
             }
+            "border" => {
+                prefs.border = match value.trim() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                };
+            }
             _ => {}
         }
     }
@@ -90,14 +101,17 @@ pub fn load() -> Prefs {
 }
 
 /// `style: None` keeps sizes out of the file (they stay session defaults).
-pub fn save(palette: &[Color32], style: Option<&Style>, ui_scale: UiScale) {
+pub fn save(palette: &[Color32], style: Option<&Style>, ui_scale: UiScale, border: bool) {
     let Some(path) = prefs_path() else { return };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let palette_line =
         palette.iter().map(|c| format_color(*c)).collect::<Vec<_>>().join(",");
-    let mut contents = format!("palette={palette_line}\nui_scale={}\n", ui_scale.as_str());
+    let mut contents = format!(
+        "palette={palette_line}\nui_scale={}\nborder={border}\n",
+        ui_scale.as_str()
+    );
     if let Some(style) = style {
         contents.push_str(&format!("width={}\nfont_size={}\n", style.width, style.font_size));
     }
